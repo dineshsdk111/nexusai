@@ -1,8 +1,90 @@
 /**
- * Vercel Serverless Function — DuckDuckGo HTML Search Proxy
- * Scrapes real web search results from DuckDuckGo HTML endpoint.
+ * Vercel Serverless Function — Free Web Search Proxy
+ *
+ * Strategy: Try multiple public SearXNG instances (open-source meta-search engines
+ * that aggregate Google/Bing/DDG). They expose a free JSON API and work from
+ * cloud server IPs. Falls back to DuckDuckGo Instant Answer API.
+ *
  * No API key required. Completely free.
  */
+
+// Public SearXNG instances with JSON API enabled
+const SEARX_INSTANCES = [
+  'https://searx.be',
+  'https://paulgo.io',
+  'https://search.mdosch.de',
+  'https://searxng.site',
+  'https://searx.tiekoetter.com'
+];
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function trySearXNG(query) {
+  for (const instance of SEARX_INSTANCES) {
+    try {
+      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&language=en-US&categories=general`;
+      const response = await fetchWithTimeout(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json'
+        }
+      }, 5000);
+
+      if (!response.ok) continue;
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) continue;
+
+      const data = await response.json();
+
+      if (data.results && data.results.length > 0) {
+        return {
+          source: instance,
+          results: data.results.slice(0, 6).map(r => ({
+            title: r.title || '',
+            snippet: r.content || '',
+            url: r.url || ''
+          }))
+        };
+      }
+    } catch (_) {
+      // Try next instance
+      continue;
+    }
+  }
+  return null;
+}
+
+async function tryDDGInstantAnswer(query) {
+  try {
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const response = await fetchWithTimeout(url, {
+      headers: { 'User-Agent': 'NexusAI/1.0 (educational chatbot)' }
+    }, 4000);
+
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    const parts = [];
+    if (data.Answer) parts.push({ title: 'Direct Answer', snippet: data.Answer, url: '' });
+    if (data.AbstractText) parts.push({ title: data.AbstractSource || 'Summary', snippet: data.AbstractText, url: data.AbstractURL || '' });
+    if (data.Definition) parts.push({ title: data.DefinitionSource || 'Definition', snippet: data.Definition, url: '' });
+
+    return parts.length > 0 ? { source: 'DuckDuckGo', results: parts } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -12,61 +94,23 @@ export default async function handler(req, res) {
 
   const { q } = req.query;
   if (!q?.trim()) {
-    return res.status(400).json({ error: 'Missing query parameter: q', results: [] });
+    return res.status(400).json({ error: 'Missing query', results: [] });
   }
 
-  try {
-    // Call DuckDuckGo HTML search — real web results, no API key needed
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
-      }
-    });
+  // Try SearXNG first (real web results), fall back to DDG Instant Answer
+  let searchData = await trySearXNG(q);
 
-    if (!response.ok) {
-      return res.status(502).json({ error: 'DuckDuckGo unavailable', results: [] });
-    }
-
-    const html = await response.text();
-
-    // Extract titles
-    const titles = [];
-    const titleRegex = /<a[^>]+class="result__a"[^>]*>([^<]+)<\/a>/g;
-    let m;
-    while ((m = titleRegex.exec(html)) !== null) {
-      titles.push(m[1].trim());
-    }
-
-    // Extract snippets (clean HTML tags)
-    const snippets = [];
-    const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-    while ((m = snippetRegex.exec(html)) !== null) {
-      snippets.push(m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
-    }
-
-    // Extract display URLs
-    const urls = [];
-    const urlRegex = /<span class="result__url">([^<]+)<\/span>/g;
-    while ((m = urlRegex.exec(html)) !== null) {
-      urls.push(m[1].trim());
-    }
-
-    const results = [];
-    const count = Math.min(5, titles.length);
-    for (let i = 0; i < count; i++) {
-      results.push({
-        title: titles[i] || '',
-        snippet: snippets[i] || '',
-        url: urls[i] || ''
-      });
-    }
-
-    return res.status(200).json({ query: q, results });
-  } catch (error) {
-    console.error('Search proxy error:', error);
-    return res.status(500).json({ error: 'Search failed', results: [] });
+  if (!searchData) {
+    searchData = await tryDDGInstantAnswer(q);
   }
+
+  if (!searchData) {
+    return res.status(200).json({ query: q, results: [], message: 'No results found' });
+  }
+
+  return res.status(200).json({
+    query: q,
+    source: searchData.source,
+    results: searchData.results
+  });
 }
