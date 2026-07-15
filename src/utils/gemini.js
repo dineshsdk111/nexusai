@@ -109,7 +109,16 @@ export async function queryGemini({
   }
 
   if (webSearchContext) {
-    basePrompt += `\n\n${webSearchContext}\n\nUse the above web search results to enhance your answer with up-to-date information where relevant. Always cite the source if you use it.`;
+    // When web search is active, instruct the model strongly to use live data
+    basePrompt += `
+
+[WEB SEARCH MODE ACTIVE]:
+You have been given live web search results below in the user's message. 
+You MUST:
+1. Prioritize the search results over your training data — they are more current.
+2. Answer based on what the search results say, not what you were trained on.
+3. If the answer is in the search results, state it clearly and cite the source.
+4. Do NOT say "as of my knowledge cutoff" — you have live data.`;
   }
 
   // Fallback for stale/invalid model names saved in localStorage
@@ -187,10 +196,25 @@ export async function queryGemini({
 
   // Format history for API: contents array
   // Gemini expects: { role: 'user'|'model', parts: [{ text: string }] }
-  const contents = chatHistory.map(msg => ({
+  let contents = chatHistory.map(msg => ({
     role: msg.sender === 'user' ? 'user' : 'model',
     parts: [{ text: msg.text }]
   }));
+
+  // RAG: Inject web search results directly into the last user message turn.
+  // This is the proper pattern — the model sees the evidence alongside the question.
+  if (webSearchContext && contents.length > 0) {
+    const lastIdx = contents.length - 1;
+    if (contents[lastIdx].role === 'user') {
+      const originalText = contents[lastIdx].parts[0].text;
+      contents[lastIdx] = {
+        role: 'user',
+        parts: [{
+          text: `${webSearchContext}\n\n---\n\nUsing the live web search results above, please answer the following question with the most up-to-date information:\n\n${originalText}`
+        }]
+      };
+    }
+  }
 
   // Build POST body
   const requestBody = {
