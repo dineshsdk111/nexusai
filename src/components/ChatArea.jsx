@@ -124,8 +124,8 @@ export default function ChatArea({
         </div>
 
         <div className="header-actions">
-          {/* Search Grounding Toggle */}
-          <div className="toggle-container" title="Search the web for up-to-date information using Google Search">
+          {/* Web Search Toggle (DuckDuckGo — Free, No API Key) */}
+          <div className="toggle-container" title="Enable DuckDuckGo web search context (free, no API key required)">
             <span className="material-symbols-outlined toggle-icon">language</span>
             <span className="toggle-label">Web Search</span>
             <label className="switch">

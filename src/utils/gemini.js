@@ -89,8 +89,8 @@ export async function queryGemini({
   chatHistory,
   mode = 'general',
   customPrompt = '',
-  enableSearch = false,
   fileContext = '',
+  webSearchContext = '',
   provider = 'gemini'
 }) {
   if (!apiKey) {
@@ -106,6 +106,10 @@ export async function queryGemini({
 
   if (fileContext) {
     basePrompt += `\n\n[ATTACHED FILE CONTEXT]:\nThe user has attached a file for this session. Use this information as source material to answer queries:\n"""\n${fileContext}\n"""`;
+  }
+
+  if (webSearchContext) {
+    basePrompt += `\n\n${webSearchContext}\n\nUse the above web search results to enhance your answer with up-to-date information where relevant. Always cite the source if you use it.`;
   }
 
   // Fallback for stale/invalid model names saved in localStorage
@@ -200,15 +204,6 @@ export async function queryGemini({
       maxOutputTokens: 8192
     }
   };
-
-  // Enable Google Search Grounding if checked
-  if (enableSearch) {
-    requestBody.tools = [
-      {
-        googleSearch: {}
-      }
-    ];
-  }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`;
 
