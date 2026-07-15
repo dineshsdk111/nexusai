@@ -1,59 +1,72 @@
 /**
- * Vercel Serverless Function — DuckDuckGo Instant Answer Proxy
- * Bypasses CORS by calling DuckDuckGo from the server side.
+ * Vercel Serverless Function — DuckDuckGo HTML Search Proxy
+ * Scrapes real web search results from DuckDuckGo HTML endpoint.
  * No API key required. Completely free.
  */
 export default async function handler(req, res) {
-  // Allow CORS from any origin (safe because there's no secret here)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   const { q } = req.query;
-
-  if (!q || !q.trim()) {
-    return res.status(400).json({ error: 'Missing query parameter: q' });
+  if (!q?.trim()) {
+    return res.status(400).json({ error: 'Missing query parameter: q', results: [] });
   }
 
   try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+    // Call DuckDuckGo HTML search — real web results, no API key needed
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'NexusAI-Chatbot/1.0 (educational project)'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
       }
     });
 
     if (!response.ok) {
-      return res.status(502).json({ error: 'DuckDuckGo API error', status: response.status });
+      return res.status(502).json({ error: 'DuckDuckGo unavailable', results: [] });
     }
 
-    const data = await response.json();
+    const html = await response.text();
 
-    // Extract the most useful parts into a clean structure
-    const result = {
-      abstract: data.AbstractText || '',
-      abstractSource: data.AbstractSource || '',
-      abstractUrl: data.AbstractURL || '',
-      answer: data.Answer || '',
-      answerType: data.AnswerType || '',
-      definition: data.Definition || '',
-      definitionSource: data.DefinitionSource || '',
-      relatedTopics: (data.RelatedTopics || [])
-        .filter(t => t.Text && t.FirstURL)
-        .slice(0, 5)
-        .map(t => ({ text: t.Text, url: t.FirstURL })),
-      results: (data.Results || [])
-        .slice(0, 3)
-        .map(r => ({ title: r.Text, url: r.FirstURL }))
-    };
+    // Extract titles
+    const titles = [];
+    const titleRegex = /<a[^>]+class="result__a"[^>]*>([^<]+)<\/a>/g;
+    let m;
+    while ((m = titleRegex.exec(html)) !== null) {
+      titles.push(m[1].trim());
+    }
 
-    return res.status(200).json(result);
+    // Extract snippets (clean HTML tags)
+    const snippets = [];
+    const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    while ((m = snippetRegex.exec(html)) !== null) {
+      snippets.push(m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
+    }
+
+    // Extract display URLs
+    const urls = [];
+    const urlRegex = /<span class="result__url">([^<]+)<\/span>/g;
+    while ((m = urlRegex.exec(html)) !== null) {
+      urls.push(m[1].trim());
+    }
+
+    const results = [];
+    const count = Math.min(5, titles.length);
+    for (let i = 0; i < count; i++) {
+      results.push({
+        title: titles[i] || '',
+        snippet: snippets[i] || '',
+        url: urls[i] || ''
+      });
+    }
+
+    return res.status(200).json({ query: q, results });
   } catch (error) {
-    console.error('DuckDuckGo proxy error:', error);
-    return res.status(500).json({ error: 'Failed to fetch search results' });
+    console.error('Search proxy error:', error);
+    return res.status(500).json({ error: 'Search failed', results: [] });
   }
 }
