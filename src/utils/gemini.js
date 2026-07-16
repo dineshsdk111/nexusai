@@ -1,3 +1,5 @@
+import { executeMultiSearch } from './search';
+
 // System Prompts for different Modes
 const SYSTEM_PROMPTS = {
   general: `You are NexusAI, a highly intelligent, premium, and friendly personal assistant. 
@@ -90,7 +92,7 @@ export async function queryGemini({
   mode = 'general',
   customPrompt = '',
   fileContext = '',
-  webSearchContext = '',
+  enableSearch = false,
   provider = 'gemini'
 }) {
   if (!apiKey) {
@@ -106,19 +108,6 @@ export async function queryGemini({
 
   if (fileContext) {
     basePrompt += `\n\n[ATTACHED FILE CONTEXT]:\nThe user has attached a file for this session. Use this information as source material to answer queries:\n"""\n${fileContext}\n"""`;
-  }
-
-  if (webSearchContext) {
-    // When web search is active, instruct the model strongly to use live data
-    basePrompt += `
-
-[WEB SEARCH MODE ACTIVE]:
-You have been given live web search results below in the user's message. 
-You MUST:
-1. Prioritize the search results over your training data — they are more current.
-2. Answer based on what the search results say, not what you were trained on.
-3. If the answer is in the search results, state it clearly and cite the source.
-4. Do NOT say "as of my knowledge cutoff" — you have live data.`;
   }
 
   // Fallback for stale/invalid model names saved in localStorage
@@ -194,25 +183,67 @@ You MUST:
     }
   }
 
-  // Format history for API: contents array
-  // Gemini expects: { role: 'user'|'model', parts: [{ text: string }] }
   let contents = chatHistory.map(msg => ({
     role: msg.sender === 'user' ? 'user' : 'model',
     parts: [{ text: msg.text }]
   }));
 
-  // RAG: Inject web search results directly into the last user message turn.
-  // This is the proper pattern — the model sees the evidence alongside the question.
-  if (webSearchContext && contents.length > 0) {
-    const lastIdx = contents.length - 1;
-    if (contents[lastIdx].role === 'user') {
-      const originalText = contents[lastIdx].parts[0].text;
-      contents[lastIdx] = {
-        role: 'user',
-        parts: [{
-          text: `${webSearchContext}\n\n---\n\nUsing the live web search results above, please answer the following question with the most up-to-date information:\n\n${originalText}`
-        }]
-      };
+  let searchQueries = [];
+  let searchSources = [];
+  let webSearchContext = '';
+
+  // --- AGENTIC FLOW: Generate Queries & Fetch Data ---
+  if (enableSearch && contents.length > 0) {
+    const lastUserMsg = contents[contents.length - 1].parts[0].text;
+    
+    // Create a temporary prompt for generating queries
+    const queryGenPrompt = `Based on the user's latest message, frame 2 to 3 concise Google search queries that would help answer their question accurately. 
+Return ONLY a JSON array of strings. No markdown, no other text.
+User message: "${lastUserMsg}"`;
+
+    const queryGenBody = {
+      contents: [{ role: 'user', parts: [{ text: queryGenPrompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
+    };
+
+    try {
+      const qRes = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(queryGenBody)
+      });
+      if (qRes.ok) {
+        const qData = await qRes.json();
+        const jsonText = qData.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+        const parsedQueries = JSON.parse(jsonText);
+        
+        if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
+          searchQueries = parsedQueries;
+          webSearchContext = await executeMultiSearch(parsedQueries);
+          
+          if (webSearchContext) {
+            // Add search context strong prompt
+            basePrompt += `\n\n[WEB SEARCH MODE ACTIVE]:\nYou have been given live web search results below in the user's message.\nYou MUST prioritize the search results over your training data. Answer based on what the search results say.`;
+            
+            // Inject into the last user message
+            const lastIdx = contents.length - 1;
+            contents[lastIdx] = {
+              role: 'user',
+              parts: [{
+                text: `${webSearchContext}\n\n---\n\nUsing the live web search results above, please answer the following question with the most up-to-date information:\n\n${lastUserMsg}`
+              }]
+            };
+            
+            // Populate mock sources for UI based on queries
+            searchSources = parsedQueries.map((q, i) => ({ title: `Search: ${q}`, url: `https://duckduckgo.com/?q=${encodeURIComponent(q)}`, number: i + 1 }));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to generate/execute search queries", e);
     }
   }
 
@@ -252,39 +283,14 @@ You MUST:
     const candidate = result.candidates?.[0];
     const replyText = candidate?.content?.parts?.[0]?.text || 'No response generated.';
 
-    // Extract search grounding metadata
-    let searchQueries = [];
-    let searchSources = [];
-
-    if (candidate?.groundingMetadata) {
-      const metadata = candidate.groundingMetadata;
-      
-      // Extract search queries executed
-      if (metadata.webSearchQueries) {
-        searchQueries = metadata.webSearchQueries;
-      }
-      
-      // Extract grounding sources
-      if (metadata.groundingChunks) {
-        searchSources = metadata.groundingChunks
-          .map((chunk, index) => {
-            if (chunk.web) {
-              return {
-                title: chunk.web.title || 'Untitled Source',
-                url: chunk.web.uri,
-                number: index + 1
-              };
-            }
-            return null;
-          })
-          .filter(source => source !== null);
-      }
-    }
+    // Note: We handled search queries and sources manually in the agentic flow above.
+    // If we were using native Gemini tools, we would extract grounding metadata here.
 
     return {
       text: replyText,
       searchQueries,
-      searchSources
+      searchSources,
+      webSearchContext
     };
 
   } catch (error) {

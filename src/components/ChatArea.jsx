@@ -244,6 +244,18 @@ export default function ChatArea({
                     </div>
                   )}
 
+                  {/* Raw Search Context (Debug) */}
+                  {msg.sender === 'bot' && msg.webSearchContext && (
+                    <div style={{ marginTop: '10px' }}>
+                      <details style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        <summary style={{ cursor: 'pointer', outline: 'none' }}>Show Raw Web Search Context (Debug)</summary>
+                        <pre style={{ marginTop: '5px', padding: '10px', backgroundColor: 'var(--bg-color)', borderRadius: '5px', whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border-color)' }}>
+                          {msg.webSearchContext}
+                        </pre>
+                      </details>
+                    </div>
+                  )}
+
                   {/* Message Action Bar (bot only) */}
                   {msg.sender === 'bot' && (
                     <div className="message-actions">

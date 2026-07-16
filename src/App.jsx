@@ -4,7 +4,7 @@ import ChatArea from './components/ChatArea';
 import StudyDesk from './components/StudyDesk';
 import SettingsModal from './components/SettingsModal';
 import { queryGemini } from './utils/gemini';
-import { searchDuckDuckGo } from './utils/search';
+
 
 // Helper to create empty default thread
 const createDefaultThread = () => ({
@@ -217,12 +217,6 @@ export default function App() {
     setIsPending(true);
 
     try {
-      // If Web Search is enabled, fetch DuckDuckGo context first
-      let webSearchContext = '';
-      if (activeT.searchGrounding) {
-        webSearchContext = await searchDuckDuckGo(text);
-      }
-
       const response = await queryGemini({
         provider: settings.provider || 'gemini',
         apiKey: settings.apiKey,
@@ -231,7 +225,7 @@ export default function App() {
         mode: activeT.mode || 'general',
         customPrompt: settings.customPrompt,
         fileContext: attachedFile ? attachedFile.text : '',
-        webSearchContext
+        enableSearch: activeT.searchGrounding || false
       });
 
       const botMsg = {
@@ -240,6 +234,7 @@ export default function App() {
         text: response.text,
         searchQueries: response.searchQueries,
         searchSources: response.searchSources,
+        webSearchContext: response.webSearchContext,
         timestamp: new Date().toISOString()
       };
 
