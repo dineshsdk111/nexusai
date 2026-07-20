@@ -1,12 +1,13 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import Sidebar from './components/Sidebar';
-import ChatArea from './components/ChatArea';
-import StudyDesk from './components/StudyDesk';
-import SettingsModal from './components/SettingsModal';
-import { queryGemini } from './utils/gemini';
+import Sidebar from '../src/components/Sidebar';
+import ChatArea from '../src/components/ChatArea';
+import StudyDesk from '../src/components/StudyDesk';
+import SettingsModal from '../src/components/SettingsModal';
+import { queryGemini } from '../src/utils/gemini';
+import './globals.css';
 
-
-// Helper to create empty default thread
 const createDefaultThread = () => ({
   id: 'thread-' + Date.now(),
   title: 'General Chat',
@@ -15,20 +16,19 @@ const createDefaultThread = () => ({
   searchGrounding: false
 });
 
-export default function App() {
-  // --- PERSISTENT STATE LOADING ---
+export default function Home() {
   const [threads, setThreads] = useState(() => {
-    const saved = localStorage.getItem('nexus_threads');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_threads') : null;
     return saved ? JSON.parse(saved) : [createDefaultThread()];
   });
 
   const [activeThreadId, setActiveThreadId] = useState(() => {
-    const saved = localStorage.getItem('nexus_active_thread_id');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_active_thread_id') : null;
     return saved || (threads[0]?.id || '');
   });
 
   const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem('nexus_settings');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_settings') : null;
     return saved ? JSON.parse(saved) : {
       provider: 'gemini',
       apiKey: '',
@@ -39,17 +39,17 @@ export default function App() {
   });
 
   const [flashcards, setFlashcards] = useState(() => {
-    const saved = localStorage.getItem('nexus_flashcards');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_flashcards') : null;
     return saved ? JSON.parse(saved) : [];
   });
 
   const [notes, setNotes] = useState(() => {
-    const saved = localStorage.getItem('nexus_notes');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_notes') : null;
     return saved || '';
   });
 
   const [quizStats, setQuizStats] = useState(() => {
-    const saved = localStorage.getItem('nexus_quiz_stats');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nexus_quiz_stats') : null;
     return saved ? JSON.parse(saved) : {
       correct: 0,
       incorrect: 0,
@@ -59,50 +59,57 @@ export default function App() {
     };
   });
 
-  // --- UI STATES ---
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStudyDeskOpen, setIsStudyDeskOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null);
   const [isPending, setIsPending] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  // --- LOCAL STORAGE EFFECTS ---
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
     if (settings.saveHistory) {
       localStorage.setItem('nexus_threads', JSON.stringify(threads));
     } else {
       localStorage.removeItem('nexus_threads');
     }
-  }, [threads, settings.saveHistory]);
+  }, [threads, settings.saveHistory, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     localStorage.setItem('nexus_active_thread_id', activeThreadId);
-  }, [activeThreadId]);
+  }, [activeThreadId, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     localStorage.setItem('nexus_settings', JSON.stringify(settings));
-  }, [settings]);
+  }, [settings, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     localStorage.setItem('nexus_flashcards', JSON.stringify(flashcards));
-  }, [flashcards]);
+  }, [flashcards, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     localStorage.setItem('nexus_notes', notes);
-  }, [notes]);
+  }, [notes, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     localStorage.setItem('nexus_quiz_stats', JSON.stringify(quizStats));
-  }, [quizStats]);
+  }, [quizStats, mounted]);
 
-  // Sync active thread with first item if active id gets lost or deleted
   useEffect(() => {
     if (threads.length > 0 && !threads.find(t => t.id === activeThreadId)) {
       setActiveThreadId(threads[0].id);
     }
   }, [threads, activeThreadId]);
 
-  // --- HANDLERS ---
   const handleSelectThread = (id) => {
     setActiveThreadId(id);
   };
@@ -132,7 +139,6 @@ export default function App() {
 
   const handleSaveSettings = (newSettings) => {
     setSettings(newSettings);
-    // Alert if key is saved
     if (newSettings.apiKey) {
       console.log("Gemini API key saved successfully.");
     }
@@ -150,13 +156,11 @@ export default function App() {
   const handleSelectMode = (mode) => {
     setThreads(prev => prev.map(t => {
       if (t.id === activeThreadId) {
-        // Automatically suggest title change for matching mode
         return { ...t, mode: mode };
       }
       return t;
     }));
 
-    // If switching to quiz mode, set quiz state as active
     if (mode === 'quiz') {
       setQuizStats(prev => ({ ...prev, isActive: true }));
     }
@@ -181,7 +185,6 @@ export default function App() {
     const activeT = threads.find(t => t.id === activeThreadId);
     if (!activeT) return;
 
-    // Compile text, append file context if attached
     let userText = text;
     if (attachedFile) {
       userText = `${text}\n\n[Context from attached file '${attachedFile.name}']:\n${attachedFile.text}`;
@@ -194,10 +197,8 @@ export default function App() {
       timestamp: new Date().toISOString()
     };
 
-    // Update messages in list immediately
     const updatedMessages = [...activeT.messages, userMsg];
-    
-    // Auto-rename session if it's the first message
+
     let newTitle = activeT.title;
     if (activeT.messages.length === 0) {
       newTitle = text.trim().substring(0, 30) + (text.trim().length > 30 ? '...' : '');
@@ -248,7 +249,6 @@ export default function App() {
         return t;
       }));
 
-      // Parse Quiz Results dynamically
       if (activeT.mode === 'quiz') {
         const textToEvaluate = response.text;
         const isCorrect = /correct/i.test(textToEvaluate) && !/incorrect/i.test(textToEvaluate);
@@ -272,7 +272,6 @@ export default function App() {
         }
       }
 
-      // Clear files after sending successfully
       setAttachedFile(null);
 
     } catch (err) {
@@ -284,9 +283,7 @@ export default function App() {
   };
 
   const handleStartQuizSession = () => {
-    // 1. Switch active mode to quiz
     handleSelectMode('quiz');
-    // 2. Clear stats for a clean quiz session
     setQuizStats({
       correct: 0,
       incorrect: 0,
@@ -294,7 +291,6 @@ export default function App() {
       xp: 0,
       isActive: true
     });
-    // 3. Push a prompt from user requesting a new quiz
     handleSendMessage("Start a 5-question study quiz on general knowledge for my studies. Ask one question at a time.");
   };
 
@@ -306,8 +302,6 @@ export default function App() {
 
   return (
     <div className="app-container">
-      
-      {/* Sidebar Component */}
       <Sidebar
         threads={threads}
         activeThreadId={activeThreadId}
@@ -320,7 +314,6 @@ export default function App() {
         setIsSidebarOpen={setIsSidebarOpen}
       />
 
-      {/* Main Chat Interface */}
       <ChatArea
         activeThread={activeThread}
         onSendMessage={handleSendMessage}
@@ -336,7 +329,6 @@ export default function App() {
         onAddFlashcard={handleAddFlashcard}
       />
 
-      {/* Study Desk drawer */}
       <StudyDesk
         isOpen={isStudyDeskOpen}
         onClose={() => setIsStudyDeskOpen(false)}
@@ -354,14 +346,12 @@ export default function App() {
         customPrompt={settings.customPrompt}
       />
 
-      {/* Settings Modal overlay */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
       />
-
     </div>
   );
 }

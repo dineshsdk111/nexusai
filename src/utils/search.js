@@ -42,48 +42,76 @@ async function searchSingleQuery(query) {
   return `Results for query: "${query}"\n` + queryParts.join('\n\n');
 }
 
+const SEARX_INSTANCES = [
+  'https://searx.be',
+  'https://paulgo.io',
+  'https://search.mdosch.de',
+  'https://searxng.site',
+  'https://searx.tiekoetter.com'
+];
+
 async function searchDuckDuckGo(query) {
-  const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-  
-  const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
-  if (!response.ok) return '';
-  
-  const html = await response.text();
-  
-  if (!html) return '';
+  let links = [];
 
-  const domParser = new DOMParser();
-  const doc = domParser.parseFromString(html, 'text/html');
-  const resultNodes = doc.querySelectorAll('.result__body');
-  
-  const fetchPromises = [];
-  
-  resultNodes.forEach((node, index) => {
-    if (index >= 3) return; // Keep top 3 links per query
-    const titleNode = node.querySelector('.result__title .result__a');
-    if (!titleNode) return;
-    
-    const title = titleNode.textContent.trim();
-    const rawUrl = titleNode.getAttribute('href');
-    
-    let cleanUrl = rawUrl;
-    if (rawUrl) {
-      const decodedUrlMatch = rawUrl.match(/uddg=([^&]+)/);
-      cleanUrl = decodedUrlMatch ? decodeURIComponent(decodedUrlMatch[1]) : rawUrl;
+  // Try SearXNG instances first (reliable JSON API, less likely to block Vercel)
+  for (const instance of SEARX_INSTANCES) {
+    try {
+      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&language=en-US`;
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+      
+      if (!response.ok) continue;
+      
+      const text = await response.text();
+      const data = JSON.parse(text);
+      if (data.results && data.results.length > 0) {
+        links = data.results.slice(0, 3).map(r => ({ url: r.url, title: r.title }));
+        break; // Successfully got links
+      }
+    } catch(e) {
+      // Continue to next instance
     }
-    
-    if (cleanUrl) {
-      // Scrape the actual webpage
-      fetchPromises.push(scrapeWebpage(cleanUrl, title));
-    }
-  });
+  }
 
+  // Fallback to DuckDuckGo HTML if SearXNG instances fail
+  if (links.length === 0) {
+    try {
+      const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+      
+      const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      if (response.ok) {
+        const html = await response.text();
+        const domParser = new DOMParser();
+        const doc = domParser.parseFromString(html, 'text/html');
+        const resultNodes = doc.querySelectorAll('.result__body');
+        
+        resultNodes.forEach((node, index) => {
+          if (index >= 3) return; // Keep top 3 links per query
+          const titleNode = node.querySelector('.result__title .result__a');
+          if (titleNode) {
+            const title = titleNode.textContent.trim();
+            const rawUrl = titleNode.getAttribute('href');
+            let cleanUrl = rawUrl;
+            if (rawUrl) {
+              const decodedUrlMatch = rawUrl.match(/uddg=([^&]+)/);
+              cleanUrl = decodedUrlMatch ? decodeURIComponent(decodedUrlMatch[1]) : rawUrl;
+            }
+            if (cleanUrl) links.push({ url: cleanUrl, title });
+          }
+        });
+      }
+    } catch(e) {}
+  }
+
+  if (links.length === 0) return '';
+
+  const fetchPromises = links.map(l => scrapeWebpage(l.url, l.title));
   const scrapedResults = await Promise.all(fetchPromises);
   const validScrapes = scrapedResults.filter(r => r !== null);
 
   if (validScrapes.length > 0) {
-    return `DuckDuckGo Top Scraped Pages:\n${validScrapes.join('\n\n')}`;
+    return `Top Scraped Web Pages for "${query}":\n${validScrapes.join('\n\n')}`;
   }
   return '';
 }
