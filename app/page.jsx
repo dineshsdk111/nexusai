@@ -226,7 +226,7 @@ export default function Home() {
         mode: activeT.mode || 'general',
         customPrompt: settings.customPrompt,
         fileContext: attachedFile ? attachedFile.text : '',
-        enableSearch: activeT.searchGrounding || false
+        enableSearch: activeT.searchGrounding || false,
       });
 
       const botMsg = {
@@ -299,6 +299,18 @@ export default function Home() {
   };
 
   const activeThread = threads.find(t => t.id === activeThreadId) || threads[0];
+
+  if (!mounted) {
+    return (
+      <div className="app-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div className="typing-indicator">
+          <div className="typing-dot"></div>
+          <div className="typing-dot"></div>
+          <div className="typing-dot"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
